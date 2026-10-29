@@ -1,0 +1,54 @@
+{
+  "name": "kadr-studio",
+  "productName": "Kadr Studio",
+  "version": "0.1.0",
+  "description": "Prosty edytor wideo: timeline, tekst, filtry, eksport MP4 (Electron + FFmpeg)",
+  "main": "src/main/main.js",
+  "author": "Kadr",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test:graph": "node test/graph.test.js",
+    "dist": "electron-builder --win --x64 --publish never"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "pl.kadr.studio",
+    "productName": "Kadr Studio",
+    "directories": { "output": "dist" },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!node_modules/ffprobe-static/bin/darwin/**",
+      "!node_modules/ffprobe-static/bin/linux/**",
+      "!node_modules/ffprobe-static/bin/win32/ia32/**"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/ffprobe-static/**"
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}.${ext}"
+    }
+  }
+}
