@@ -19,6 +19,16 @@ const MEDIA_EXT = [
   'jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif',
 ];
 
+// AppImage nie ma binarki chrome-sandbox z SUID, więc Chromium polega na user namespaces.
+// Na systemach, które je ograniczają (np. Ubuntu 23.10+ z AppArmor) start bez --no-sandbox się nie powiedzie.
+function sandboxUnavailable() {
+  const rd = (f) => { try { return fs.readFileSync(f, 'utf8').trim(); } catch { return null; } };
+  return rd('/proc/sys/kernel/apparmor_restrict_unprivileged_userns') === '1' || rd('/proc/sys/kernel/unprivileged_userns_clone') === '0';
+}
+if (process.platform === 'linux' && (process.env.KADR_NO_SANDBOX === '1' || (process.env.APPIMAGE && sandboxUnavailable()))) {
+  app.commandLine.appendSwitch('no-sandbox');
+}
+
 let win = null;
 let ff = null; // aktywny proces eksportu
 let ffCancelled = false;
@@ -167,24 +177,9 @@ ipcMain.handle('project:open', async () => {
 ipcMain.handle('shell:reveal', (_e, p) => shell.showItemInFolder(p));
 
 // ---------------------------------------------------------------- IPC: eksport
-function pickFonts() {
-  if (process.platform === 'win32') {
-    const dir = path.join(process.env.WINDIR || 'C:\\Windows', 'Fonts');
-    const pick = (...names) => {
-      for (const n of names) {
-        const p = path.join(dir, n);
-        if (fs.existsSync(p)) return p.replace(/\\/g, '/');
-      }
-      return path.join(dir, names[0]).replace(/\\/g, '/');
-    };
-    return { regular: pick('arial.ttf', 'segoeui.ttf'), bold: pick('arialbd.ttf', 'segoeuib.ttf') };
-  }
-  return { regular: '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', bold: '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf' };
-}
-
 const send = (ch, data) => win && !win.isDestroyed() && win.webContents.send(ch, data);
 
-ipcMain.handle('export:start', async (_e, { project, settings }) => {
+ipcMain.handle('export:start', async (_e, { project, settings, textImages }) => {
   if (ff) return { error: 'Eksport już trwa.' };
   const r = await dialog.showSaveDialog(win, {
     title: 'Eksportuj wideo',
@@ -194,13 +189,18 @@ ipcMain.handle('export:start', async (_e, { project, settings }) => {
   if (r.canceled) return { canceled: true };
 
   const { w, h } = canvasSize(settings.aspect, settings.shortSide);
-  const fonts = pickFonts();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kadr-'));
   let built;
   try {
+    const textPaths = {};
+    for (const [id, b64] of Object.entries(textImages || {})) {
+      const f = path.join(tmpDir, `text_${id.replace(/[^\w-]/g, '')}.png`);
+      fs.writeFileSync(f, Buffer.from(b64, 'base64'));
+      textPaths[id] = f;
+    }
     built = buildExportArgs(project, {
       width: w, height: h, fps: settings.fps, crf: settings.crf, preset: settings.preset,
-      outPath: r.filePath, tmpDir, fontRegular: fonts.regular, fontBold: fonts.bold,
+      outPath: r.filePath, tmpDir, textImages: textPaths,
     });
     for (const f of built.files) fs.writeFileSync(f.path, f.content, 'utf8');
   } catch (err) {

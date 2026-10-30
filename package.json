@@ -4,12 +4,17 @@
   "version": "0.1.0",
   "description": "Prosty edytor wideo: timeline, tekst, filtry, eksport MP4 (Electron + FFmpeg)",
   "main": "src/main/main.js",
-  "author": "Kadr",
+  "author": {
+    "name": "Kadr",
+    "email": "kadr@example.com"
+  },
   "license": "MIT",
   "scripts": {
     "start": "electron .",
     "test:graph": "node test/graph.test.js",
-    "dist": "electron-builder --win --x64 --publish never"
+    "dist": "electron-builder --win --x64 --publish never",
+    "dist:win": "electron-builder --win --x64 --publish never",
+    "dist:linux": "electron-builder --linux AppImage --x64 --publish never"
   },
   "dependencies": {
     "ffmpeg-static": "^5.2.0",
@@ -22,23 +27,41 @@
   "build": {
     "appId": "pl.kadr.studio",
     "productName": "Kadr Studio",
-    "directories": { "output": "dist" },
+    "directories": {
+      "output": "dist"
+    },
     "files": [
       "src/**/*",
       "package.json",
       "node_modules/**/*",
-      "!node_modules/ffprobe-static/bin/darwin/**",
-      "!node_modules/ffprobe-static/bin/linux/**",
-      "!node_modules/ffprobe-static/bin/win32/ia32/**"
+      "!test{,/**}",
+      "!README.md",
+      "!.github{,/**}"
     ],
     "asarUnpack": [
       "node_modules/ffmpeg-static/**",
       "node_modules/ffprobe-static/**"
     ],
     "win": {
+      "icon": "build/icon.ico",
+      "files": [
+        "!node_modules/ffprobe-static/bin/darwin/**",
+        "!node_modules/ffprobe-static/bin/linux/**",
+        "!node_modules/ffprobe-static/bin/win32/ia32/**"
+      ],
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {
@@ -49,6 +72,28 @@
     },
     "portable": {
       "artifactName": "${productName}-Portable-${version}.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "AudioVideo",
+      "executableName": "kadr-studio",
+      "synopsis": "Prosty edytor wideo",
+      "files": [
+        "!node_modules/ffprobe-static/bin/darwin/**",
+        "!node_modules/ffprobe-static/bin/win32/**",
+        "!node_modules/ffprobe-static/bin/linux/ia32/**"
+      ],
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "appImage": {
+      "artifactName": "Kadr-Studio-${version}-x86_64.${ext}"
     }
   }
 }

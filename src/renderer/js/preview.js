@@ -1,6 +1,6 @@
 // Podgląd na żywo: każdy aktywny klip to element DOM ułożony wg toru (V1 < V2 < tekst).
 // Wideo/audio są synchronizowane z zegarem osi czasu.
-import { state, emit, ASPECTS, clipDur, clipEnd, projectDuration, getMedia, fileUrl, clamp } from './store.js';
+import { state, emit, ASPECTS, clipDur, clipEnd, projectDuration, getMedia, fileUrl, clamp, TEXT_FONT } from './store.js';
 import { $, h } from './dom.js';
 
 const stage = $('#stage');
@@ -68,6 +68,7 @@ function update(e, c, t) {
     e.style.display = 'block';
     e.style.zIndex = Z.T1;
     e.textContent = c.text;
+    e.style.fontFamily = TEXT_FONT;
     e.style.fontSize = (stageH * (c.fontSize || 8)) / 100 + 'px';
     e.style.color = c.color;
     e.style.fontWeight = c.bold ? '700' : '400';

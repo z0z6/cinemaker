@@ -9,6 +9,17 @@ export const TRACKS = [
 ];
 export const ASPECTS = { '16:9': [16, 9], '9:16': [9, 16], '1:1': [1, 1], '4:3': [4, 3], '21:9': [21, 9] };
 
+export const TEXT_FONT = 'Arial, "Liberation Sans", "Segoe UI", "DejaVu Sans", sans-serif';
+
+/** Rozmiar kadru eksportu; shortSide = krótszy bok (720, 1080, 1440, 2160). Musi zgadzać się z src/main/exportGraph.js */
+export function canvasSize(aspect, shortSide) {
+  const [a, b] = ASPECTS[aspect] || ASPECTS['16:9'];
+  const even = (v) => Math.max(2, Math.round(v / 2) * 2);
+  return a >= b
+    ? { w: even((shortSide * a) / b), h: even(shortSide) }
+    : { w: even(shortSide), h: even((shortSide * b) / a) };
+}
+
 export const trackKind = (id) => (TRACKS.find((t) => t.id === id) || {}).kind;
 export const kindForType = (type) => (type === 'text' ? 'text' : type === 'audio' ? 'audio' : 'video');
 export const uid = () => Math.random().toString(36).slice(2, 9);
@@ -39,7 +50,10 @@ export const clipDur = (c) => (c.out - c.in) / (c.speed || 1);
 export const clipEnd = (c) => c.start + clipDur(c);
 export const projectDuration = () => state.project.clips.reduce((d, c) => Math.max(d, clipEnd(c)), 0);
 
-export const fileUrl = (p) => 'file:///' + encodeURI(p.replace(/\\/g, '/')).replace(/#/g, '%23').replace(/\?/g, '%3F');
+export const fileUrl = (p) => {
+  const u = encodeURI(p.replace(/\\/g, '/')).replace(/#/g, '%23').replace(/\?/g, '%3F');
+  return u.startsWith('/') ? 'file://' + u : 'file:///' + u; // /home/x → file:///home/x, C:/x → file:///C:/x
+};
 
 export function fmtTime(t, prec = 1) {
   const k = 10 ** prec;

@@ -7,7 +7,7 @@
  *  { id, track, type: 'video'|'image'|'audio'|'text', mediaId,
  *    start, in, out, speed, volume, fadeIn, fadeOut,
  *    scale, x, y, opacity, brightness, contrast, saturation, blur, sepia,   // wideo / obraz
- *    text, fontSize, color, bold, box }                                      // tekst
+ *    text, fontSize, color, bold, box }                                      // tekst (rasteryzowany do PNG przez renderer)
  *  start = pozycja na osi czasu [s]; in/out = zakres w źródle [s]; czas na osi = (out-in)/speed
  */
 const path = require('path');
@@ -37,9 +37,6 @@ function atempoChain(speed) {
   if (Math.abs(s - 1) > 1e-6) out.push(`atempo=${n(s)}`);
   return out;
 }
-
-// ścieżka wewnątrz filtra FFmpeg: ukośniki "/" i ucieczka dwukropka (C\:/Windows/...)
-const escPath = (p) => p.replace(/\\/g, '/').replace(/:/g, '\\:');
 
 function buildExportArgs(project, o) {
   const { width: W, height: H, fps } = o;
@@ -73,24 +70,39 @@ function buildExportArgs(project, o) {
     audioLabels.push(outLabel);
   };
 
-  // ---------- WIDEO + OBRAZY (V1 pod V2) ----------
+  // ---------- WARSTWY OBRAZU: wideo/obrazy (V1 pod V2), na wierzchu napisy ----------
+  // Napisy są wcześniej rasteryzowane do PNG przez Chromium (o.textImages[clipId] = ścieżka),
+  // dzięki czemu nie potrzeba filtra drawtext (brak w wielu buildach FFmpeg) ani czcionek systemowych.
   const z = { V1: 0, V2: 1 };
-  const visual = clips
-    .filter((c) => c.type === 'video' || c.type === 'image')
-    .sort((a, b) => (z[a.track] || 0) - (z[b.track] || 0) || a.start - b.start);
+  const layers = [
+    ...clips
+      .filter((c) => c.type === 'video' || c.type === 'image')
+      .sort((a, b) => (z[a.track] || 0) - (z[b.track] || 0) || a.start - b.start),
+    ...clips.filter((c) => c.type === 'text' && String(c.text || '').trim()).sort((a, b) => a.start - b.start),
+  ];
 
   let cur = 'base';
-  visual.forEach((c, i) => {
-    const m = getMedia(c);
-    const sp = c.type === 'image' ? 1 : c.speed || 1;
+  layers.forEach((c, i) => {
+    const isText = c.type === 'text';
+    const m = isText ? null : getMedia(c);
+    const sp = c.type === 'video' ? c.speed || 1 : 1;
     const d = dur(c);
     const idx = nextInput++;
-    if (c.type === 'image') inputs.push('-loop', '1', '-framerate', String(fps), '-t', n(d), '-i', m.path);
-    else inputs.push('-ss', n(c.in), '-t', n(c.out - c.in), '-i', m.path);
+    if (isText) {
+      const tp = o.textImages && o.textImages[c.id];
+      if (!tp) throw new Error('Brak obrazu napisu dla klipu tekstowego.');
+      inputs.push('-loop', '1', '-framerate', String(fps), '-t', n(d), '-i', tp);
+    } else if (c.type === 'image') {
+      inputs.push('-loop', '1', '-framerate', String(fps), '-t', n(d), '-i', m.path);
+    } else {
+      inputs.push('-ss', n(c.in), '-t', n(c.out - c.in), '-i', m.path);
+    }
 
-    const f = [`setpts=(PTS-STARTPTS)/${n(sp)}`, `fps=${fps}`, `scale=${W}:${H}:force_original_aspect_ratio=decrease`, 'setsar=1'];
+    const f = [`setpts=(PTS-STARTPTS)/${n(sp)}`, `fps=${fps}`];
+    if (isText) f.push('setsar=1'); // PNG ma już docelowy rozmiar w pikselach kadru
+    else f.push(`scale=${W}:${H}:force_original_aspect_ratio=decrease`, 'setsar=1');
     const s = c.scale ?? 1;
-    if (Math.abs(s - 1) > 1e-3) f.push(`scale=trunc(iw*${n(s)}/2)*2:trunc(ih*${n(s)}/2)*2`);
+    if (!isText && Math.abs(s - 1) > 1e-3) f.push(`scale=trunc(iw*${n(s)}/2)*2:trunc(ih*${n(s)}/2)*2`);
     if (c.brightness || (c.contrast ?? 1) !== 1 || (c.saturation ?? 1) !== 1) {
       f.push(`eq=brightness=${n(c.brightness || 0)}:contrast=${n(c.contrast ?? 1)}:saturation=${n(c.saturation ?? 1)}`);
     }
@@ -102,7 +114,7 @@ function buildExportArgs(project, o) {
       if (op < 1) mix.push(`aa=${n(op)}`);
       f.push('format=rgba', `colorchannelmixer=${mix.join(':')}`);
     }
-    if (op < 1 || c.fadeIn > 0 || c.fadeOut > 0) f.push('format=yuva420p');
+    if (isText || op < 1 || c.fadeIn > 0 || c.fadeOut > 0) f.push('format=yuva420p');
     if (c.fadeIn > 0) f.push(`fade=t=in:st=0:d=${n(c.fadeIn)}:alpha=1`);
     if (c.fadeOut > 0) f.push(`fade=t=out:st=${n(Math.max(0, d - c.fadeOut))}:d=${n(c.fadeOut)}:alpha=1`);
     f.push(`setpts=PTS+${n(c.start)}/TB`);
@@ -117,36 +129,6 @@ function buildExportArgs(project, o) {
 
     if (c.type === 'video' && m.hasAudio && c.volume > 0) audioChain(`[${idx}:a]`, c, `[av${i}]`);
   });
-
-  // ---------- TEKST (drawtext) ----------
-  clips
-    .filter((c) => c.type === 'text' && String(c.text || '').trim())
-    .sort((a, b) => a.start - b.start)
-    .forEach((c, i) => {
-      const file = path.join(o.tmpDir, `text${i}.txt`).replace(/\\/g, '/');
-      files.push({ path: file, content: String(c.text) });
-      const color = /^#[0-9a-f]{6}$/i.test(c.color) ? c.color.slice(1) : 'ffffff';
-      const size = Math.max(8, Math.round((H * (c.fontSize || 8)) / 100));
-      const s = n(c.start), e = n(endOf(c));
-      const opts = [
-        `fontfile='${escPath(c.bold ? o.fontBold : o.fontRegular)}'`,
-        `textfile='${escPath(file)}'`,
-        'expansion=none',
-        `fontsize=${size}`,
-        `fontcolor=0x${color}`,
-        `x='(w-text_w)/2+${n((c.x || 0) / 100)}*w'`,
-        `y='(h-text_h)/2+${n((c.y || 0) / 100)}*h'`,
-        `shadowcolor=black@0.5:shadowx=${Math.max(1, Math.round(H / 540))}:shadowy=${Math.max(1, Math.round(H / 540))}`,
-      ];
-      if (c.box) opts.push(`box=1:boxcolor=black@0.55:boxborderw=${Math.round(H * 0.013)}`);
-      if (c.fadeIn > 0 || c.fadeOut > 0) {
-        const fi = Math.max(0.001, c.fadeIn || 0), fo = Math.max(0.001, c.fadeOut || 0);
-        opts.push(`alpha='clip(min((t-${s})/${n(fi)},(${e}-t)/${n(fo)}),0,1)'`);
-      }
-      opts.push(`enable='between(t,${s},${e})'`);
-      parts.push(`[${cur}]drawtext=${opts.join(':')}[t${i}]`);
-      cur = `t${i}`;
-    });
   parts.push(`[${cur}]format=yuv420p[vout]`);
 
   // ---------- AUDIO ----------

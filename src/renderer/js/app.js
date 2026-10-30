@@ -1,11 +1,12 @@
 import {
   state, on, newProject, setProject, markSaved, addMedia, removeMedia, addClipFromMedia, addText, removeClip,
-  splitAtPlayhead, undo, redo, canUndo, canRedo, projectDuration, fmtTime, setSelected, fileUrl, kindForType,
+  splitAtPlayhead, undo, redo, canUndo, canRedo, projectDuration, fmtTime, setSelected, fileUrl, kindForType, canvasSize,
 } from './store.js';
 import { $, $$, h, toast } from './dom.js';
 import * as preview from './preview.js';
 import * as timeline from './timeline.js';
 import * as inspector from './inspector.js';
+import { rasterizeText } from './textRaster.js';
 
 const api = window.kadr;
 
@@ -171,7 +172,11 @@ $('#ex-start').onclick = async () => {
     crf: +$('#ex-q').value,
     preset: 'medium',
   };
-  const r = await api.startExport({ project: JSON.parse(JSON.stringify(state.project)), settings });
+  // napisy → PNG w rozdzielczości eksportu (FFmpeg tylko je nakłada)
+  const { h: H } = canvasSize(settings.aspect, settings.shortSide);
+  const textImages = {};
+  for (const c of state.project.clips) if (c.type === 'text' && String(c.text || '').trim()) textImages[c.id] = rasterizeText(c, H);
+  const r = await api.startExport({ project: JSON.parse(JSON.stringify(state.project)), settings, textImages });
   if (r.canceled) return;
   if (r.error) { exportUI('error', r.error); return; }
   exporting = true;

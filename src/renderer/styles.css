@@ -15,8 +15,8 @@
   --c-image: #1f6f66;
   --c-audio: #2f7650;
   --c-text: #744aa8;
-  --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, "Ubuntu", "Noto Sans", "Cantarell", sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, "DejaVu Sans Mono", "Liberation Mono", monospace;
   --label-w: 92px;
 }
 
@@ -24,7 +24,8 @@
 html, body { height: 100%; margin: 0; }
 body {
   display: grid;
-  grid-template-rows: 46px minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr); /* bez tego szeroka oś czasu rozciąga całą stronę */
+  grid-template-rows: 46px minmax(0, 1fr) 316px;
   background: var(--bg);
   color: var(--text);
   font: 13px/1.4 var(--ui);
@@ -101,6 +102,7 @@ input[type="color"] { width: 40px; height: 24px; padding: 0; border: 1px solid v
 .empty-state strong { color: var(--text); }
 .empty-state p + p { margin-top: 6px; }
 .library.is-empty .empty-state { display: block; }
+.library.is-empty .lib-list { display: none; }
 body.drag-over .library { outline: 2px dashed var(--accent); outline-offset: -6px; }
 
 /* ---------- podgląd ---------- */
@@ -111,7 +113,7 @@ body.drag-over .library { outline: 2px dashed var(--accent); outline-offset: -6p
 audio.layer { display: none !important; }
 .ov-text {
   position: absolute; display: none; transform: translate(-50%, -50%); white-space: pre; text-align: center;
-  font-family: Arial, "Segoe UI", sans-serif; line-height: 1.2; pointer-events: none;
+  font-family: Arial, "Liberation Sans", "Segoe UI", "DejaVu Sans", sans-serif; line-height: 1.2; pointer-events: none;
 }
 .transport {
   display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px; background: var(--panel); border-top: 1px solid var(--line);
@@ -142,11 +144,11 @@ audio.layer { display: none !important; }
 .inspector .hint { margin-top: 4px; }
 
 /* ---------- oś czasu ---------- */
-.timeline { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-top: 1px solid var(--line); }
+.timeline { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border-top: 1px solid var(--line); }
 .tl-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); }
 .zoom-group label { color: var(--dim); }
 .zoom-group input { width: 140px; }
-.tl-scroll { flex: 1; overflow: auto; min-height: 0; position: relative; background: #121317; }
+.tl-scroll { flex: 1; overflow: auto; min-height: 0; min-width: 0; position: relative; background: #121317; }
 .tl-content { position: relative; min-width: 100%; }
 
 .tl-ruler { position: sticky; top: 0; z-index: 8; display: flex; height: 28px; background: var(--panel); border-bottom: 1px solid var(--line); cursor: pointer; }
@@ -155,7 +157,7 @@ audio.layer { display: none !important; }
 .tick { position: absolute; bottom: 0; height: 6px; border-left: 1px solid var(--line-2); pointer-events: none; }
 .tick.major { top: 0; height: auto; padding: 4px 0 0 5px; font: 11px var(--mono); color: var(--dim); border-left-color: #596070; }
 
-.tl-track { display: flex; height: 48px; border-bottom: 1px solid #1c1f25; }
+.tl-track { display: flex; height: 44px; border-bottom: 1px solid #1c1f25; }
 .tl-track-name {
   position: sticky; left: 0; z-index: 6; flex: none; width: var(--label-w);
   display: flex; align-items: center; padding-left: 12px; color: var(--dim);
