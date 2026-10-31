@@ -19,15 +19,8 @@ const MEDIA_EXT = [
   'jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif',
 ];
 
-// AppImage nie ma binarki chrome-sandbox z SUID, więc Chromium polega na user namespaces.
-// Na systemach, które je ograniczają (np. Ubuntu 23.10+ z AppArmor) start bez --no-sandbox się nie powiedzie.
-function sandboxUnavailable() {
-  const rd = (f) => { try { return fs.readFileSync(f, 'utf8').trim(); } catch { return null; } };
-  return rd('/proc/sys/kernel/apparmor_restrict_unprivileged_userns') === '1' || rd('/proc/sys/kernel/unprivileged_userns_clone') === '0';
-}
-if (process.platform === 'linux' && (process.env.KADR_NO_SANDBOX === '1' || (process.env.APPIMAGE && sandboxUnavailable()))) {
-  app.commandLine.appendSwitch('no-sandbox');
-}
+// Uwaga: flagi --no-sandbox nie da się ustawić stąd (Chromium sprawdza piaskownicę wcześniej).
+// Na Linuksie robi to skrypt startowy build/linux/launcher.sh.
 
 let win = null;
 let ff = null; // aktywny proces eksportu

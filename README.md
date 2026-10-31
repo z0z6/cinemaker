@@ -1,6 +1,6 @@
 # Kadr Studio
 
-Prosty edytor wideo na **Windows (instalator + portable) i Linux (AppImage)** w stylu Movie Makera / CapCuta: oś czasu z wieloma torami, podgląd na żywo,
+Prosty edytor wideo na **Windows (instalator + portable) i Linux (AppImage + paczka .deb)** w stylu Movie Makera / CapCuta: oś czasu z wieloma torami, podgląd na żywo,
 napisy, filtry, tempo, głośność, eksport do MP4. Electron + HTML/CSS/JS, eksport przez FFmpeg (spakowany z aplikacją).
 
 ## Funkcje
@@ -22,7 +22,8 @@ npm install          # pobiera też Electrona oraz FFmpeg/FFprobe (ffmpeg-static
 npm start            # uruchamia aplikację (F12 = narzędzia deweloperskie)
 npm run test:graph   # test silnika eksportu na prawdziwym FFmpeg
 npm run dist:win     # build Windows (NSIS + portable) → dist/   (uruchamiaj na Windowsie)
-npm run dist:linux   # build Linux AppImage → dist/              (uruchamiaj na Linuksie)
+npm run dist:linux   # build Linux: AppImage + deb → dist/        (uruchamiaj na Linuksie)
+npm run dist:appimage / npm run dist:deb   # tylko jeden z formatów Linuksa
 ```
 
 ## Build w GitHub Actions
@@ -31,26 +32,41 @@ npm run dist:linux   # build Linux AppImage → dist/              (uruchamiaj n
 (starsza glibc, więc AppImage działa także na starszych dystrybucjach). Kroki: `npm ci` → test silnika eksportu → `electron-builder` → artefakty w zakładce **Actions**:
 
 - `Kadr Studio-Setup-x.y.z.exe`, `Kadr Studio-Portable-x.y.z.exe`
-- `Kadr-Studio-x.y.z-x86_64.AppImage`
+- `Kadr-Studio-x.y.z-x86_64.AppImage`, `kadr-studio_x.y.z_amd64.deb`
 
 Wypchnięcie tagu `v*` (np. `git tag v0.1.0 && git push --tags`) dodatkowo tworzy **GitHub Release** z tymi plikami.
 Instalator Windows nie jest podpisany certyfikatem, więc SmartScreen pokaże ostrzeżenie (podpisywanie: `CSC_LINK` / `CSC_KEY_PASSWORD` w sekretach).
 Ikony są w `build/` (`icon.png` dla Linuksa, `icon.ico` dla Windows); podmień je na własne.
 
-## Linux (AppImage)
+## Linux (deb i AppImage)
+
+**Paczka deb** (Debian 12+, Ubuntu 22.04+, Mint, Pop!_OS…): instaluje się w `/opt/Kadr Studio`, dodaje polecenie `kadr-studio`,
+wpis w menu aplikacji (kategoria Dźwięk i wideo) i ikonę. Zależności systemowe dociąga `apt`:
+
+```bash
+sudo apt install ./kadr-studio_0.1.0_amd64.deb
+sudo apt remove kadr-studio        # odinstalowanie
+```
+
+**AppImage** (bez instalacji):
 
 ```bash
 chmod +x Kadr-Studio-*-x86_64.AppImage
 ./Kadr-Studio-*-x86_64.AppImage
 ```
 
-- **FUSE:** na Ubuntu 22.04+ AppImage wymaga `libfuse2` (`sudo apt install libfuse2`; na 24.04: `libfuse2t64`).
-  Bez FUSE uruchom: `./Kadr-Studio-*.AppImage --appimage-extract-and-run`.
-- **Piaskownica Chromium:** na systemach, które ograniczają user namespaces (np. Ubuntu 23.10+ z AppArmor), aplikacja sama
-  dodaje `--no-sandbox` (tylko w AppImage i tylko gdy system blokuje piaskownicę). Interfejs ładuje wyłącznie lokalne pliki aplikacji.
-  Wymuszenie ręczne: `KADR_NO_SANDBOX=1`.
-- Obsługiwana architektura: **x86_64**. (`ffprobe-static` nie ma binarki dla ARM64.)
+Na Ubuntu 22.04+ AppImage wymaga `libfuse2` (`sudo apt install libfuse2`; na 24.04: `libfuse2t64`).
+Bez FUSE uruchom: `./Kadr-Studio-*.AppImage --appimage-extract-and-run`.
+
+**Piaskownica Chromium.** Oba formaty startują przez skrypt `kadr-studio` (`build/linux/launcher.sh`), który uruchamia właściwą
+binarkę `kadr-studio.bin`. Piaskownica jest włączona zawsze, gdy system pozwala na user namespaces albo `chrome-sandbox` ma SUID root.
+Tylko jeśli system blokuje user namespaces (np. Ubuntu 23.10+ z AppArmor) i nie ma SUID, skrypt dodaje `--no-sandbox`,
+bo inaczej Chromium nie wystartuje. Dzieje się to przed uruchomieniem aplikacji, bo z poziomu JavaScriptu nie da się tego ustawić.
+Interfejs ładuje wyłącznie lokalne pliki aplikacji. Wymuszenie wyłączenia: `KADR_NO_SANDBOX=1`.
+
+- Obsługiwana architektura: **x86_64** (`ffprobe-static` nie ma binarki dla ARM64).
 - Wbudowany FFmpeg (`ffmpeg-static`) jest statyczny, więc nie trzeba niczego instalować w systemie.
+- Pole `homepage` w `package.json` to placeholder (wymaga go format deb); w GitHub Actions jest nadpisywane adresem Twojego repozytorium.
 - Pliki projektu `.kadr` zawierają bezwzględne ścieżki do materiałów, więc projekt przeniesiony między Windows a Linuksem
   wymaga ponownego podpięcia plików (aplikacja pokaże, których brakuje).
 

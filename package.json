@@ -3,6 +3,7 @@
   "productName": "Kadr Studio",
   "version": "0.1.0",
   "description": "Prosty edytor wideo: timeline, tekst, filtry, eksport MP4 (Electron + FFmpeg)",
+  "homepage": "https://github.com/OWNER/kadr-studio",
   "main": "src/main/main.js",
   "author": {
     "name": "Kadr",
@@ -14,7 +15,9 @@
     "test:graph": "node test/graph.test.js",
     "dist": "electron-builder --win --x64 --publish never",
     "dist:win": "electron-builder --win --x64 --publish never",
-    "dist:linux": "electron-builder --linux AppImage --x64 --publish never"
+    "dist:linux": "electron-builder --linux AppImage deb --x64 --publish never",
+    "dist:appimage": "electron-builder --linux AppImage --x64 --publish never",
+    "dist:deb": "electron-builder --linux deb --x64 --publish never"
   },
   "dependencies": {
     "ffmpeg-static": "^5.2.0",
@@ -89,11 +92,42 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
         }
-      ]
+      ],
+      "description": "Prosty edytor wideo z osią czasu, napisami, filtrami i eksportem do MP4 (FFmpeg w zestawie)."
     },
     "appImage": {
       "artifactName": "Kadr-Studio-${version}-x86_64.${ext}"
-    }
+    },
+    "deb": {
+      "packageName": "kadr-studio",
+      "artifactName": "kadr-studio_${version}_${arch}.${ext}",
+      "priority": "optional",
+      "packageCategory": "video",
+      "depends": [
+        "libgtk-3-0 | libgtk-3-0t64",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0 | libatspi2.0-0t64",
+        "libuuid1",
+        "libsecret-1-0",
+        "libasound2 | libasound2t64",
+        "libgbm1",
+        "libdrm2"
+      ],
+      "recommends": [
+        "libappindicator3-1"
+      ]
+    },
+    "afterPack": "build/afterPack.js"
   }
 }
