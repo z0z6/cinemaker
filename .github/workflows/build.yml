@@ -23,7 +23,9 @@ jobs:
           - os: ubuntu-22.04          # starsza glibc => AppImage działa też na starszych dystrybucjach
             script: dist:linux
             artifact: kadr-studio-linux
-            files: dist/*.AppImage
+            files: |
+              dist/*.AppImage
+              dist/*.deb
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +37,9 @@ jobs:
 
       - name: Instalacja zależności (pobiera też FFmpeg i FFprobe)
         run: npm ci
+
+      - name: Adres repozytorium jako homepage (wymagany przez pakiet deb)
+        run: npm pkg set homepage="https://github.com/${{ github.repository }}"
 
       - name: Test silnika eksportu (prawdziwy FFmpeg)
         run: npm run test:graph
