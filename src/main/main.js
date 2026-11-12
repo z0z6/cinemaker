@@ -5,7 +5,9 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
-const { buildExportArgs, canvasSize } = require('./exportGraph');
+const { buildExportArgs, canvasSize, frameTimes, textsAt, FORMATS, ASPECTS } = require('./exportGraph');
+const { publicCatalog } = require('./formats');
+const slides = require('./slides');
 
 // Binarki w spakowanej aplikacji leżą w app.asar.unpacked (patrz "asarUnpack" w package.json)
 const unpack = (p) => p.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
@@ -22,6 +24,15 @@ const MEDIA_EXT = [
 // Uwaga: flagi --no-sandbox nie da się ustawić stąd (Chromium sprawdza piaskownicę wcześniej).
 // Na Linuksie robi to skrypt startowy build/linux/launcher.sh.
 
+// ---------------------------------------------------------------- preferencje (motyw)
+const prefsFile = () => path.join(app.getPath('userData'), 'prefs.json');
+function readPrefs() {
+  try { return JSON.parse(fs.readFileSync(prefsFile(), 'utf8')); } catch { return {}; }
+}
+function writePrefs(patch) {
+  try { fs.writeFileSync(prefsFile(), JSON.stringify({ ...readPrefs(), ...patch }), 'utf8'); } catch { /* bez znaczenia */ }
+}
+
 let win = null;
 let ff = null; // aktywny proces eksportu
 let ffCancelled = false;
@@ -32,7 +43,7 @@ function createWindow() {
     height: 920,
     minWidth: 1100,
     minHeight: 700,
-    backgroundColor: '#121316',
+    backgroundColor: readPrefs().themeBg || '#121316', // tło okna przed załadowaniem CSS (bez błysku przy jasnym motywie)
     title: 'Kadr Studio',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -169,21 +180,80 @@ ipcMain.handle('project:open', async () => {
 
 ipcMain.handle('shell:reveal', (_e, p) => shell.showItemInFolder(p));
 
+// ---------------------------------------------------------------- IPC: wygląd
+ipcMain.handle('ui:theme', (_e, { id, bg }) => {
+  if (typeof bg === 'string' && /^#[0-9a-f]{6}$/i.test(bg)) {
+    if (win && !win.isDestroyed()) win.setBackgroundColor(bg);
+    writePrefs({ theme: id, themeBg: bg });
+  }
+});
+
 // ---------------------------------------------------------------- IPC: eksport
 const send = (ch, data) => win && !win.isDestroyed() && win.webContents.send(ch, data);
 
+ipcMain.handle('export:formats', () => publicCatalog());
+
+/** Uruchamia FFmpeg; postęp 0–1 przez onPct. Odrzuca z err.cancelled = true po przerwaniu. */
+function runFfmpeg(args, duration, onPct) {
+  return new Promise((resolve, reject) => {
+    let errBuf = '';
+    let outBuf = '';
+    ff = spawn(FFMPEG, args, { windowsHide: true });
+    ff.stdout.on('data', (d) => {
+      outBuf += d;
+      const lines = outBuf.split(/\r?\n/);
+      outBuf = lines.pop();
+      for (const line of lines) {
+        const m = line.match(/^out_time_(?:us|ms)=(\d+)/); // w obu przypadkach to mikrosekundy
+        if (m) onPct(Math.min(1, parseInt(m[1], 10) / 1e6 / duration));
+      }
+    });
+    ff.stderr.on('data', (d) => { errBuf = (errBuf + d).slice(-3000); });
+    ff.on('error', (err) => { ff = null; reject(new Error('Nie można uruchomić FFmpeg: ' + err.message)); });
+    ff.on('close', (code) => {
+      ff = null;
+      if (ffCancelled) { const e = new Error('cancelled'); e.cancelled = true; reject(e); }
+      else if (code === 0) resolve();
+      else reject(new Error(errBuf.trim() || `FFmpeg zakończył się kodem ${code}`));
+    });
+  });
+}
+
+let exportBusy = false;
+
 ipcMain.handle('export:start', async (_e, { project, settings, textImages }) => {
-  if (ff) return { error: 'Eksport już trwa.' };
+  if (exportBusy) return { error: 'Eksport już trwa.' };
+  const fmtId = FORMATS[settings.format] ? settings.format : 'mp4';
+  const fmt = FORMATS[fmtId];
   const r = await dialog.showSaveDialog(win, {
-    title: 'Eksportuj wideo',
-    defaultPath: 'film.mp4',
-    filters: [{ name: 'Wideo MP4', extensions: ['mp4'] }],
+    title: fmt.kind === 'sequence' ? 'Zapisz serię klatek (do nazwy zostanie dodany numer)' : 'Eksportuj',
+    defaultPath: `${fmt.name}.${fmt.ext}`,
+    filters: [{ name: fmt.label, extensions: [fmt.ext] }],
   });
   if (r.canceled) return { canceled: true };
 
+  // na Linuksie okno zapisu nie zawsze dopisuje rozszerzenie
+  let outPath = r.filePath;
+  if (path.extname(outPath).toLowerCase() !== '.' + fmt.ext) outPath += '.' + fmt.ext;
+
   const { w, h } = canvasSize(settings.aspect, settings.shortSide);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kadr-'));
+  const cleanup = () => fs.rm(tmpDir, { recursive: true, force: true }, () => {});
+  const fps = settings.fps || 30;
+
+  // dokąd FFmpeg zapisuje: film/obraz wprost do celu, seria do nazwa_0001.png…, slajdy do katalogu tymczasowego
+  let ffOut = outPath;
+  let revealPath = outPath;
+  const seqBase = outPath.slice(0, -(fmt.ext.length + 1));
+  if (fmt.kind === 'sequence') {
+    ffOut = `${seqBase}_%04d.${fmt.ext}`;
+    revealPath = `${seqBase}_0001.${fmt.ext}`;
+  } else if (fmt.kind === 'slides') {
+    ffOut = path.join(tmpDir, 'slide_%04d.jpg');
+  }
+
   let built;
+  let times = null;
   try {
     const textPaths = {};
     for (const [id, b64] of Object.entries(textImages || {})) {
@@ -191,47 +261,59 @@ ipcMain.handle('export:start', async (_e, { project, settings, textImages }) => 
       fs.writeFileSync(f, Buffer.from(b64, 'base64'));
       textPaths[id] = f;
     }
+    if (fmt.kind === 'sequence' || fmt.kind === 'slides') {
+      times = frameTimes(project, { mode: fmt.kind === 'sequence' ? 'interval' : settings.slideMode, interval: settings.interval, fps });
+    }
     built = buildExportArgs(project, {
-      width: w, height: h, fps: settings.fps, crf: settings.crf, preset: settings.preset,
-      outPath: r.filePath, tmpDir, textImages: textPaths,
+      format: fmtId, width: w, height: h, fps, quality: settings.quality,
+      at: settings.playhead || 0, times,
+      outPath: ffOut, tmpDir, textImages: textPaths,
     });
     for (const f of built.files) fs.writeFileSync(f.path, f.content, 'utf8');
   } catch (err) {
+    cleanup();
     return { error: err.message };
   }
 
   ffCancelled = false;
-  let errBuf = '';
-  let outBuf = '';
-  const cleanup = () => fs.rm(tmpDir, { recursive: true, force: true }, () => {});
+  exportBusy = true;
+  const isSlides = fmt.kind === 'slides';
+  const share = isSlides ? 0.9 : 1; // przy prezentacji ostatnie 10% to składanie pliku
 
-  ff = spawn(FFMPEG, built.args, { windowsHide: true });
-  ff.stdout.on('data', (d) => {
-    outBuf += d;
-    const lines = outBuf.split(/\r?\n/);
-    outBuf = lines.pop();
-    for (const line of lines) {
-      const m = line.match(/^out_time_(?:us|ms)=(\d+)/); // w obu przypadkach to mikrosekundy
-      if (m) send('export:progress', { pct: Math.min(1, parseInt(m[1], 10) / 1e6 / built.duration) });
+  (async () => {
+    try {
+      await runFfmpeg(built.args, built.duration, (p) => send('export:progress', { pct: p * share, stage: 'render' }));
+      if (isSlides) {
+        send('export:progress', { pct: 0.92, stage: 'build' });
+        const images = times.map((_, i) => path.join(tmpDir, `slide_${String(i + 1).padStart(4, '0')}.jpg`)).filter((f) => fs.existsSync(f));
+        const info = times.slice(0, images.length).map((t) => ({ time: t, texts: textsAt(project, t) }));
+        const [a, b] = ASPECTS[settings.aspect] || ASPECTS['16:9'];
+        const meta = { images, info, aspect: [a, b], title: settings.title || 'Prezentacja', outPath, tmpDir };
+        if (fmtId === 'pptx') await slides.buildPptx(meta);
+        else await slides.buildPdf(meta);
+      }
+      send('export:done', { ok: true, path: revealPath, kind: fmt.kind, count: times ? times.length : 1 });
+    } catch (err) {
+      if (err.cancelled) {
+        if (fmt.kind === 'sequence') {
+          const dir = path.dirname(seqBase);
+          const prefix = path.basename(seqBase) + '_';
+          for (const f of fs.readdirSync(dir)) {
+            if (f.startsWith(prefix) && /^\d{4}$/.test(f.slice(prefix.length, -(fmt.ext.length + 1)))) fs.rm(path.join(dir, f), { force: true }, () => {});
+          }
+        } else {
+          fs.rm(outPath, { force: true }, () => {});
+        }
+        send('export:done', { canceled: true });
+      } else {
+        send('export:done', { ok: false, error: err.message });
+      }
+    } finally {
+      exportBusy = false;
+      cleanup();
     }
-  });
-  ff.stderr.on('data', (d) => { errBuf = (errBuf + d).slice(-3000); });
-  ff.on('error', (err) => {
-    ff = null; cleanup();
-    send('export:done', { ok: false, error: 'Nie można uruchomić FFmpeg: ' + err.message });
-  });
-  ff.on('close', (code) => {
-    const cancelled = ffCancelled;
-    ff = null; cleanup();
-    if (cancelled) {
-      fs.rm(r.filePath, { force: true }, () => {});
-      send('export:done', { canceled: true });
-    } else if (code === 0) {
-      send('export:done', { ok: true, path: r.filePath });
-    } else {
-      send('export:done', { ok: false, error: errBuf.trim() || `FFmpeg zakończył się kodem ${code}` });
-    }
-  });
+  })();
+
   return { started: true, duration: built.duration, width: w, height: h };
 });
 

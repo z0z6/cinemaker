@@ -1,7 +1,7 @@
 # Kadr Studio
 
 Prosty edytor wideo na **Windows (instalator + portable) i Linux (AppImage + paczka .deb)** w stylu Movie Makera / CapCuta: oś czasu z wieloma torami, podgląd na żywo,
-napisy, filtry, tempo, głośność, eksport do MP4. Electron + HTML/CSS/JS, eksport przez FFmpeg (spakowany z aplikacją).
+napisy, filtry, tempo, głośność, eksport do filmu, dźwięku, grafiki i prezentacji. Electron + HTML/CSS/JS, eksport przez FFmpeg (spakowany z aplikacją).
 
 ## Funkcje
 
@@ -12,7 +12,12 @@ napisy, filtry, tempo, głośność, eksport do MP4. Electron + HTML/CSS/JS, eks
   jasność, kontrast, nasycenie, rozmycie, sepia + gotowe filtry.
 - **Napisy**: treść, rozmiar, kolor, pogrubienie, tło, położenie, animacja wejścia/wyjścia.
 - **Formaty kadru**: 16:9, 9:16, 1:1, 4:3, 21:9; 24–60 kl./s.
-- **Eksport**: MP4 (H.264 + AAC), 720p–4K, trzy poziomy jakości, pasek postępu, możliwość przerwania.
+- **Eksport** (720p–4K, trzy poziomy jakości, pasek postępu, możliwość przerwania):
+  - **wideo**: MP4 H.264, MP4 H.265/HEVC, WebM VP9 + Opus, MKV H.264 + FLAC, MOV Apple ProRes 422, AVI Xvid + MP3;
+  - **audio** (cała ścieżka dźwiękowa projektu): MP3, M4A/AAC, OGG Vorbis, Opus, WAV, FLAC;
+  - **grafika**: klatka z pozycji głowicy (PNG, JPG, WebP), seria klatek co N sekund (PNG, JPG), animowany GIF i WebP;
+  - **prezentacja**: PowerPoint (PPTX) i PDF – slajd na każde ujęcie albo co N sekund, napisy z toru Tekst trafiają do notatek prelegenta.
+- **Motywy kolorystyczne**: Systemowy (jasny/ciemny jak w systemie), Grafit, Jasny, Północ, Bursztyn, Las, Wysoki kontrast – wybór w pasku górnym, zapamiętywany.
 - **Projekty** `.kadr` (JSON), cofnij/ponów (100 kroków).
 
 ## Uruchomienie lokalnie
@@ -88,7 +93,9 @@ Interfejs ładuje wyłącznie lokalne pliki aplikacji. Wymuszenie wyłączenia: 
 
 ```
 src/main/main.js         proces główny: okno, IPC, ffprobe, miniatury, zapis projektów, uruchomienie FFmpeg
-src/main/exportGraph.js  model projektu → argumenty FFmpeg (filter_complex); czysty moduł, testowany w Node
+src/main/exportGraph.js  model projektu → argumenty FFmpeg (filter_complex) dla każdego formatu; czysty moduł, testowany w Node
+src/main/formats.js      katalog formatów eksportu (kodeki, pola w oknie eksportu)
+src/main/slides.js       klatki → PPTX (pptxgenjs) / PDF (printToPDF w ukrytym oknie)
 src/main/preload.js      bezpieczny most IPC (contextIsolation + sandbox)
 src/renderer/js/store.js model, operacje na klipach, historia undo/redo (bez DOM)
 src/renderer/js/preview.js    podgląd: warstwy DOM zsynchronizowane z zegarem osi czasu
@@ -96,6 +103,7 @@ src/renderer/js/timeline.js   oś czasu: rysowanie, drag/trim/snap, zoom
 src/renderer/js/inspector.js  panel właściwości
 src/renderer/js/textRaster.js napisy → PNG (canvas Chromium) na potrzeby eksportu
 src/renderer/js/app.js        spięcie: biblioteka, projekty, skróty, dialog eksportu
+src/renderer/js/theme.js      motywy kolorystyczne (kolory w styles.css, :root[data-theme])
 ```
 
 Model klipu: `start` (pozycja na osi), `in`/`out` (zakres w pliku źródłowym), `speed`. Długość na osi = `(out − in) / speed`.
@@ -103,6 +111,8 @@ Podział klipu to po prostu rozcięcie zakresu `in/out`, a przycięcie krawędzi
 
 Eksport składa jeden graf FFmpeg: czarne tło → nakładanie klipów wideo/obrazów (V1, potem V2) → napisy (PNG wyrenderowane przez Chromium, więc bez filtra `drawtext` i bez zależności od czcionek systemowych);
 dźwięk z klipów jest opóźniany (`adelay`), skalowany tempem (`atempo`) i miksowany (`amix`) z cichą bazą.
+Eksport audio pomija warstwy obrazu, a grafika i prezentacje pomijają dźwięk; klatki do zdjęć i slajdów wybiera filtr `select`,
+GIF dostaje paletę liczoną z całego filmu (`palettegen`/`paletteuse`). Nowy format to jeden wpis w `src/main/formats.js`.
 
 ## Znane ograniczenia (i pomysły na rozwój)
 
@@ -113,7 +123,7 @@ dźwięk z klipów jest opóźniany (`adelay`), skalowany tempem (`atempo`) i mi
 - Podgląd ogranicza głośność do 100 %; wzmocnienie powyżej słychać po eksporcie.
 - Brak przejść między klipami (xfade), kluczowania, animacji klatek kluczowych, napisów automatycznych, fali dźwięku na klipach audio.
 - Napisy używają kroju Arial (na Linuksie Liberation Sans/DejaVu, zależnie od systemu); wybór czcionki to prosty następny krok.
-- Eksport działa na CPU (libx264). Akceleracja sprzętowa (`h264_nvenc`, `h264_qsv`, `h264_amf`) wymaga innej binarki FFmpeg.
+- Eksport działa na CPU (libx264/libx265/libvpx). Akceleracja sprzętowa (`h264_nvenc`, `h264_qsv`, `h264_amf`) wymaga innej binarki FFmpeg.
 - Licencje: `ffmpeg-static` dostarcza build GPL (z x264). Jeśli dystrybuujesz aplikację publicznie, zapoznaj się z licencją FFmpeg/x264.
 
 ## Dlaczego Electron, a nie Tauri?

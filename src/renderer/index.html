@@ -5,6 +5,7 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; img-src 'self' file: data:; media-src 'self' file:; style-src 'self'; script-src 'self'" />
   <title>Kadr Studio</title>
+  <script src="js/theme-boot.js"></script>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -20,7 +21,8 @@
       <button id="btn-redo" title="Ponów (Ctrl+Y)">Ponów</button>
     </div>
     <div id="project-name" class="project-name"></div>
-    <button id="btn-export" class="primary" title="Eksportuj film (Ctrl+E)">Eksportuj</button>
+    <label class="theme-pick" for="theme">Motyw <select id="theme"></select></label>
+    <button id="btn-export" class="primary" title="Eksportuj film, dźwięk, grafikę lub prezentację (Ctrl+E)">Eksportuj</button>
   </header>
 
   <main class="workspace">
@@ -82,23 +84,24 @@
     </div>
   </section>
 
-  <dialog id="export-dlg" class="dlg">
-    <h2>Eksport wideo</h2>
+  <dialog id="export-dlg" class="dlg" aria-labelledby="ex-title">
+    <h2 id="ex-title">Eksport</h2>
     <div id="ex-form">
-      <div class="field"><label for="ex-res">Rozdzielczość</label>
-        <select id="ex-res">
-          <option value="720">HD – 720p</option>
-          <option value="1080" selected>Full HD – 1080p</option>
-          <option value="1440">QHD – 1440p</option>
-          <option value="2160">4K – 2160p</option>
+      <div id="ex-groups" class="seg" role="group" aria-label="Rodzaj pliku"></div>
+      <div class="field"><label for="ex-format">Format</label><select id="ex-format"></select></div>
+      <p id="ex-desc" class="hint"></p>
+      <div class="field" data-opt="res"><label for="ex-res">Rozdzielczość</label><select id="ex-res"></select></div>
+      <div class="field" data-opt="fps"><label for="ex-fps">Klatki na sekundę</label><select id="ex-fps"></select></div>
+      <div class="field" data-opt="quality"><label for="ex-q">Jakość</label><select id="ex-q"></select></div>
+      <div class="field" data-opt="slides"><label for="ex-slides">Slajdy</label>
+        <select id="ex-slides">
+          <option value="clips">Jeden na każde ujęcie</option>
+          <option value="interval">Co określony czas</option>
         </select></div>
-      <div class="field"><label for="ex-fps">Klatki na sekundę</label>
-        <select id="ex-fps"><option>24</option><option>25</option><option selected>30</option><option>50</option><option>60</option></select></div>
-      <div class="field"><label for="ex-q">Jakość</label>
-        <select id="ex-q">
-          <option value="18">Wysoka (większy plik)</option>
-          <option value="21" selected>Standardowa</option>
-          <option value="25">Mała (mniejszy plik)</option>
+      <div class="field" data-opt="interval"><label for="ex-interval">Odstęp</label>
+        <select id="ex-interval">
+          <option value="1">co 1 s</option><option value="2">co 2 s</option><option value="5" selected>co 5 s</option>
+          <option value="10">co 10 s</option><option value="15">co 15 s</option><option value="30">co 30 s</option><option value="60">co minutę</option>
         </select></div>
       <p id="ex-info" class="hint"></p>
     </div>

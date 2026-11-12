@@ -4,7 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { buildExportArgs, canvasSize } = require('../src/main/exportGraph');
+const { buildExportArgs, canvasSize, frameTimes, FORMATS } = require('../src/main/exportGraph');
 
 const tryRequire = (name, pick) => { try { const v = require(name); return pick ? pick(v) : v; } catch { return null; } };
 const FFMPEG = process.env.FFMPEG_PATH || tryRequire('ffmpeg-static') || 'ffmpeg';
@@ -68,3 +68,56 @@ const hasA = info.streams.some((s) => s.codec_type === 'audio');
 if (!hasV || !hasA) throw new Error('Brak strumienia wideo lub audio w wyniku');
 if (Math.abs(dur - expected) > 0.35) throw new Error(`Zła długość: ${dur}s (oczekiwano ~${expected}s)`);
 console.log(`OK: ${w}x${h} canvas, eksport ${dur.toFixed(2)}s, wideo+audio obecne`);
+
+// ---------------------------------------------------------------- pozostałe formaty
+const probeJson = (f) => JSON.parse(run(FFPROBE, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', f]));
+const noProgress = (args) => args.filter((a, i, arr) => !(a === '-progress' || arr[i - 1] === '-progress'));
+const times = frameTimes(project, { mode: 'clips', fps: 25 });
+if (times.length < 3) throw new Error(`frameTimes(clips) => ${times}`);
+
+const checks = {
+  av: (f) => { const s = probeJson(f).streams; return s.some((x) => x.codec_type === 'video') && s.some((x) => x.codec_type === 'audio'); },
+  audio: (f) => { const s = probeJson(f).streams; return s.length === 1 && s[0].codec_type === 'audio' && Math.abs(parseFloat(probeJson(f).format.duration) - expected) < 0.35; },
+  still: (f) => probeJson(f).streams[0].width === 320,
+  anim: (f) => probeJson(f).streams[0].codec_type === 'video',
+};
+for (const [id, fmt] of Object.entries(FORMATS)) {
+  const multi = fmt.kind === 'sequence' || fmt.kind === 'slides';
+  const outF = path.join(tmp, multi ? `seq_${id}_%04d.${fmt.kind === 'slides' ? 'jpg' : fmt.ext}` : `out_${id}.${fmt.ext}`);
+  const fps = fmt.kind === 'anim' ? 10 : 25;
+  const b = buildExportArgs(project, {
+    format: id, width: 320, height: 180, fps, quality: 'small', at: 2.2, times,
+    outPath: outF, tmpDir: tmp, textImages: { c4: txt },
+  });
+  const t0 = Date.now();
+  try { run(FFMPEG, noProgress(b.args)); } catch (e) {
+    console.error(`FFmpeg error (${id}):\n` + (e.stderr ? e.stderr.toString() : e.message));
+    console.error('\nGRAF:\n' + b.graph);
+    process.exit(1);
+  }
+  let ok;
+  if (multi) {
+    const made = fs.readdirSync(tmp).filter((x) => x.startsWith(`seq_${id}_`));
+    ok = made.length === times.length;
+    if (!ok) throw new Error(`${id}: ${made.length} klatek zamiast ${times.length}`);
+  } else {
+    ok = checks[fmt.kind](outF);
+    if (!ok) throw new Error(`${id}: niepoprawny plik wynikowy`);
+  }
+  console.log(`OK: ${id.padEnd(10)} ${fmt.kind.padEnd(8)} ${Date.now() - t0} ms`);
+}
+
+// ---------------------------------------------------------------- PPTX z wyrenderowanych klatek (PDF wymaga Electrona)
+const { buildPptx } = require('../src/main/slides');
+const { textsAt } = require('../src/main/exportGraph');
+const slideImgs = fs.readdirSync(tmp).filter((x) => x.startsWith('seq_pptx_')).sort().map((x) => path.join(tmp, x));
+const pptxOut = path.join(tmp, 'prez.pptx');
+buildPptx({
+  images: slideImgs, info: times.map((t) => ({ time: t, texts: textsAt(project, t) })),
+  aspect: [16, 9], title: 'Test', outPath: pptxOut,
+}).then(() => {
+  const size = fs.statSync(pptxOut).size;
+  if (size < 2000) throw new Error('PPTX jest pusty');
+  console.log(`OK: pptx złożony (${slideImgs.length} slajdy, ${Math.round(size / 1024)} kB)`);
+  fs.rmSync(tmp, { recursive: true, force: true });
+}).catch((e) => { console.error(e); process.exit(1); });

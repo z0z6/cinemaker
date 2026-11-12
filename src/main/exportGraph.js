@@ -11,6 +11,7 @@
  *  start = pozycja na osi czasu [s]; in/out = zakres w źródle [s]; czas na osi = (out-in)/speed
  */
 const path = require('path');
+const { FORMATS } = require('./formats');
 
 const ASPECTS = { '16:9': [16, 9], '9:16': [9, 16], '1:1': [1, 1], '4:3': [4, 3], '21:9': [21, 9] };
 
@@ -38,18 +39,29 @@ function atempoChain(speed) {
   return out;
 }
 
-function buildExportArgs(project, o) {
+/**
+ * Buduje graf filtrów dla całego projektu.
+ * o.video / o.audio – które strumienie są potrzebne (np. eksport MP3 pomija wszystkie warstwy obrazu,
+ * a GIF/PNG pomija dźwięk), o.vfmt – format pikseli wyjścia [vout].
+ */
+function buildGraph(project, o) {
   const { width: W, height: H, fps } = o;
+  const wantV = o.video !== false;
+  const wantA = o.audio !== false;
   const clips = project.clips.filter((c) => c.out - c.in > 0.01);
   if (!clips.length) throw new Error('Projekt jest pusty – dodaj klipy na oś czasu.');
   const media = new Map(project.media.map((m) => [m.id, m]));
   const D = Math.max(0.1, ...clips.map(endOf));
 
-  const inputs = ['-f', 'lavfi', '-t', n(D), '-i', 'anullsrc=r=48000:cl=stereo']; // wejście 0 = cisza (baza audio)
-  let nextInput = 1;
-  const parts = [`color=c=black:s=${W}x${H}:r=${fps}:d=${n(D)}[base]`];
-  const files = [];
-  const audioLabels = ['[0:a]'];
+  const inputs = [];
+  const parts = [];
+  const audioLabels = [];
+  let nextInput = 0;
+  if (wantA) { // wejście 0 = cisza (baza audio)
+    inputs.push('-f', 'lavfi', '-t', n(D), '-i', 'anullsrc=r=48000:cl=stereo');
+    audioLabels.push(`[${nextInput++}:a]`);
+  }
+  if (wantV) parts.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${n(D)}[base]`);
 
   const getMedia = (c) => {
     const m = media.get(c.mediaId);
@@ -81,70 +93,173 @@ function buildExportArgs(project, o) {
     ...clips.filter((c) => c.type === 'text' && String(c.text || '').trim()).sort((a, b) => a.start - b.start),
   ];
 
-  let cur = 'base';
-  layers.forEach((c, i) => {
-    const isText = c.type === 'text';
-    const m = isText ? null : getMedia(c);
-    const sp = c.type === 'video' ? c.speed || 1 : 1;
-    const d = dur(c);
-    const idx = nextInput++;
-    if (isText) {
-      const tp = o.textImages && o.textImages[c.id];
-      if (!tp) throw new Error('Brak obrazu napisu dla klipu tekstowego.');
-      inputs.push('-loop', '1', '-framerate', String(fps), '-t', n(d), '-i', tp);
-    } else if (c.type === 'image') {
-      inputs.push('-loop', '1', '-framerate', String(fps), '-t', n(d), '-i', m.path);
-    } else {
-      inputs.push('-ss', n(c.in), '-t', n(c.out - c.in), '-i', m.path);
-    }
+  if (wantV) {
+    let cur = 'base';
+    layers.forEach((c, i) => {
+      const isText = c.type === 'text';
+      const m = isText ? null : getMedia(c);
+      const sp = c.type === 'video' ? c.speed || 1 : 1;
+      const d = dur(c);
+      const idx = nextInput++;
+      if (isText) {
+        const tp = o.textImages && o.textImages[c.id];
+        if (!tp) throw new Error('Brak obrazu napisu dla klipu tekstowego.');
+        inputs.push('-loop', '1', '-framerate', String(fps), '-t', n(d), '-i', tp);
+      } else if (c.type === 'image') {
+        inputs.push('-loop', '1', '-framerate', String(fps), '-t', n(d), '-i', m.path);
+      } else {
+        inputs.push('-ss', n(c.in), '-t', n(c.out - c.in), '-i', m.path);
+      }
 
-    const f = [`setpts=(PTS-STARTPTS)/${n(sp)}`, `fps=${fps}`];
-    if (isText) f.push('setsar=1'); // PNG ma już docelowy rozmiar w pikselach kadru
-    else f.push(`scale=${W}:${H}:force_original_aspect_ratio=decrease`, 'setsar=1');
-    const s = c.scale ?? 1;
-    if (!isText && Math.abs(s - 1) > 1e-3) f.push(`scale=trunc(iw*${n(s)}/2)*2:trunc(ih*${n(s)}/2)*2`);
-    if (c.brightness || (c.contrast ?? 1) !== 1 || (c.saturation ?? 1) !== 1) {
-      f.push(`eq=brightness=${n(c.brightness || 0)}:contrast=${n(c.contrast ?? 1)}:saturation=${n(c.saturation ?? 1)}`);
-    }
-    if (c.blur > 0) f.push(`gblur=sigma=${n((c.blur * H) / 1080)}`);
-    const op = c.opacity ?? 1;
-    if (c.sepia || op < 1) {
-      const mix = [];
-      if (c.sepia) mix.push('rr=.393:rg=.769:rb=.189:gr=.349:gg=.686:gb=.168:br=.272:bg=.534:bb=.131');
-      if (op < 1) mix.push(`aa=${n(op)}`);
-      f.push('format=rgba', `colorchannelmixer=${mix.join(':')}`);
-    }
-    if (isText || op < 1 || c.fadeIn > 0 || c.fadeOut > 0) f.push('format=yuva420p');
-    if (c.fadeIn > 0) f.push(`fade=t=in:st=0:d=${n(c.fadeIn)}:alpha=1`);
-    if (c.fadeOut > 0) f.push(`fade=t=out:st=${n(Math.max(0, d - c.fadeOut))}:d=${n(c.fadeOut)}:alpha=1`);
-    f.push(`setpts=PTS+${n(c.start)}/TB`);
-    parts.push(`[${idx}:v]${f.join(',')}[v${i}]`);
+      const f = [`setpts=(PTS-STARTPTS)/${n(sp)}`, `fps=${fps}`];
+      if (isText) f.push('setsar=1'); // PNG ma już docelowy rozmiar w pikselach kadru
+      else f.push(`scale=${W}:${H}:force_original_aspect_ratio=decrease`, 'setsar=1');
+      const s = c.scale ?? 1;
+      if (!isText && Math.abs(s - 1) > 1e-3) f.push(`scale=trunc(iw*${n(s)}/2)*2:trunc(ih*${n(s)}/2)*2`);
+      if (c.brightness || (c.contrast ?? 1) !== 1 || (c.saturation ?? 1) !== 1) {
+        f.push(`eq=brightness=${n(c.brightness || 0)}:contrast=${n(c.contrast ?? 1)}:saturation=${n(c.saturation ?? 1)}`);
+      }
+      if (c.blur > 0) f.push(`gblur=sigma=${n((c.blur * H) / 1080)}`);
+      const op = c.opacity ?? 1;
+      if (c.sepia || op < 1) {
+        const mix = [];
+        if (c.sepia) mix.push('rr=.393:rg=.769:rb=.189:gr=.349:gg=.686:gb=.168:br=.272:bg=.534:bb=.131');
+        if (op < 1) mix.push(`aa=${n(op)}`);
+        f.push('format=rgba', `colorchannelmixer=${mix.join(':')}`);
+      }
+      if (isText || op < 1 || c.fadeIn > 0 || c.fadeOut > 0) f.push('format=yuva420p');
+      if (c.fadeIn > 0) f.push(`fade=t=in:st=0:d=${n(c.fadeIn)}:alpha=1`);
+      if (c.fadeOut > 0) f.push(`fade=t=out:st=${n(Math.max(0, d - c.fadeOut))}:d=${n(c.fadeOut)}:alpha=1`);
+      f.push(`setpts=PTS+${n(c.start)}/TB`);
+      parts.push(`[${idx}:v]${f.join(',')}[v${i}]`);
 
-    const ox = `(W-w)/2+${n((c.x || 0) / 100)}*W`;
-    const oy = `(H-h)/2+${n((c.y || 0) / 100)}*H`;
-    parts.push(
-      `[${cur}][v${i}]overlay=x='${ox}':y='${oy}':eof_action=pass:enable='between(t,${n(c.start)},${n(endOf(c))})'[o${i}]`
-    );
-    cur = `o${i}`;
+      const ox = `(W-w)/2+${n((c.x || 0) / 100)}*W`;
+      const oy = `(H-h)/2+${n((c.y || 0) / 100)}*H`;
+      parts.push(
+        `[${cur}][v${i}]overlay=x='${ox}':y='${oy}':eof_action=pass:enable='between(t,${n(c.start)},${n(endOf(c))})'[o${i}]`
+      );
+      cur = `o${i}`;
 
-    if (c.type === 'video' && m.hasAudio && c.volume > 0) audioChain(`[${idx}:a]`, c, `[av${i}]`);
-  });
-  parts.push(`[${cur}]format=yuv420p[vout]`);
+      if (wantA && c.type === 'video' && m.hasAudio && c.volume > 0) audioChain(`[${idx}:a]`, c, `[av${i}]`);
+    });
+    parts.push(`[${cur}]format=${o.vfmt || 'yuv420p'}[vout]`);
+  } else if (wantA) {
+    // tylko dźwięk: z klipów wideo bierzemy samą ścieżkę audio, bez dekodowania obrazu
+    layers
+      .filter((c) => c.type === 'video' && getMedia(c).hasAudio && c.volume > 0)
+      .forEach((c, i) => {
+        const idx = nextInput++;
+        inputs.push('-vn', '-ss', n(c.in), '-t', n(c.out - c.in), '-i', getMedia(c).path);
+        audioChain(`[${idx}:a]`, c, `[av${i}]`);
+      });
+  }
 
   // ---------- AUDIO ----------
-  clips
-    .filter((c) => c.type === 'audio')
-    .sort((a, b) => a.start - b.start)
-    .forEach((c, i) => {
-      const m = getMedia(c);
-      const idx = nextInput++;
-      inputs.push('-ss', n(c.in), '-t', n(c.out - c.in), '-i', m.path);
-      audioChain(`[${idx}:a]`, c, `[aa${i}]`);
-    });
-  parts.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.97[aout]`);
+  if (wantA) {
+    clips
+      .filter((c) => c.type === 'audio')
+      .sort((a, b) => a.start - b.start)
+      .forEach((c, i) => {
+        const m = getMedia(c);
+        const idx = nextInput++;
+        inputs.push('-ss', n(c.in), '-t', n(c.out - c.in), '-i', m.path);
+        audioChain(`[${idx}:a]`, c, `[aa${i}]`);
+      });
+    parts.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.97[aout]`);
+  }
+
+  return { inputs, parts, duration: D, clips };
+}
+
+/** Momenty (w sekundach) dla slajdów prezentacji / serii klatek. */
+function frameTimes(project, { mode = 'clips', interval = 5, fps = 30 } = {}) {
+  const clips = project.clips.filter((c) => c.out - c.in > 0.01);
+  const D = Math.max(0, ...clips.map(endOf));
+  const last = Math.max(0, D - 1 / fps);
+  let times;
+  if (mode === 'interval') {
+    const step = Math.max(0.5, +interval || 5);
+    times = [];
+    // pierwszy kadr nie w samym zerze (często tam jest wejście z czerni)
+    for (let t = Math.min(0.5, last); t <= last + 1e-6; t += step) times.push(t);
+  } else {
+    // „jeden slajd na ujęcie”: każde miejsce, w którym zaczyna się klip obrazu albo napis
+    const visual = clips.filter((c) => c.type !== 'audio').sort((a, b) => a.start - b.start);
+    if (!visual.length) throw new Error('W projekcie nie ma obrazu ani napisów, z których można zrobić slajdy.');
+    times = [];
+    for (const c of visual) {
+      const t = Math.min(c.start + Math.min(1, dur(c) / 2), last);
+      if (!times.some((x) => Math.abs(x - t) < 0.75)) times.push(t);
+    }
+    times.sort((a, b) => a - b);
+  }
+  if (!times.length) times = [0];
+  return times.slice(0, 500);
+}
+
+/** Napisy widoczne w danym momencie (do notatek prelegenta). */
+function textsAt(project, t) {
+  return project.clips
+    .filter((c) => c.type === 'text' && String(c.text || '').trim() && c.start <= t && endOf(c) > t)
+    .map((c) => String(c.text).trim());
+}
+
+/**
+ * Model projektu + ustawienia → argumenty FFmpeg dla wybranego formatu.
+ * o: { format, width, height, fps, quality, outPath, tmpDir, textImages, at (still), times (sequence/slides) }
+ */
+function buildExportArgs(project, o) {
+  const fmtId = o.format || 'mp4';
+  const fmt = FORMATS[fmtId];
+  if (!fmt) throw new Error(`Nieznany format eksportu: ${fmtId}`);
+  const q = o.quality || 'standard';
+  const k = fmt.kind;
+  const wantV = k !== 'audio';
+  const wantA = k === 'av' || k === 'audio';
+
+  const g = buildGraph(project, { ...o, video: wantV, audio: wantA, vfmt: k === 'anim' && fmtId === 'gif' ? 'rgb24' : fmt.vfmt });
+  const parts = g.parts;
+  const maps = [];
+  let D = g.duration;
+  let tail = [];
+  let progressDuration = D;
+
+  if (k === 'av') {
+    maps.push('-map', '[vout]', '-map', '[aout]');
+    tail = [...fmt.codec(q, o), '-r', String(o.fps), '-t', n(D)];
+  } else if (k === 'audio') {
+    maps.push('-map', '[aout]');
+    tail = [...fmt.codec(q, o), '-t', n(D)];
+  } else if (k === 'anim') {
+    if (fmtId === 'gif') {
+      // paleta liczona z całego filmu => dużo lepsze kolory niż domyślna paleta GIF
+      parts.push('[vout]split[g1][g2]', '[g1]palettegen=stats_mode=diff[pal]', '[g2][pal]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle[gout]');
+      maps.push('-map', '[gout]');
+    } else {
+      maps.push('-map', '[vout]');
+    }
+    tail = [...fmt.codec(q, o), '-t', n(D)];
+  } else {
+    // still / sequence / slides: wybieramy konkretne klatki z wyrenderowanego obrazu
+    const total = Math.max(1, Math.round(D * o.fps));
+    const frameOf = (t) => Math.min(total - 1, Math.max(0, Math.round(t * o.fps)));
+    let frames;
+    if (k === 'still') frames = [frameOf(o.at || 0)];
+    else frames = [...new Set((o.times || [0]).map(frameOf))].sort((a, b) => a - b);
+    const expr = frames.map((f) => `eq(n\\,${f})`).join('+');
+    parts.push(`[vout]select='${expr}'[sel]`);
+    maps.push('-map', '[sel]');
+    const lastFrame = frames[frames.length - 1];
+    progressDuration = Math.max(0.1, (lastFrame + 1) / o.fps);
+    // render kończy się po ostatniej potrzebnej klatce
+    tail = [...(fmt.codec ? fmt.codec(q, o) : ['-c:v', 'mjpeg', '-q:v', '2']), '-fps_mode', 'passthrough', '-frames:v', String(frames.length)];
+    if (k === 'still') tail.push('-update', '1');
+    D = progressDuration;
+  }
 
   // ---------- ARGUMENTY ----------
-  let graph = parts.join(';');
+  const graph = parts.join(';');
+  const files = [];
   const graphArgs = [];
   if (graph.length > 20000) {
     // bardzo długi graf: Windows ogranicza długość wiersza poleceń
@@ -157,16 +272,13 @@ function buildExportArgs(project, o) {
 
   const args = [
     '-y', '-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1',
-    ...inputs,
+    ...g.inputs,
     ...graphArgs,
-    '-map', '[vout]', '-map', '[aout]',
-    '-c:v', 'libx264', '-preset', o.preset || 'medium', '-crf', String(o.crf ?? 21), '-pix_fmt', 'yuv420p', '-r', String(fps),
-    '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
-    '-movflags', '+faststart',
-    '-t', n(D),
+    ...maps,
+    ...tail,
     o.outPath,
   ];
-  return { args, files, duration: D, graph };
+  return { args, files, duration: progressDuration, graph, format: fmtId, kind: k };
 }
 
-module.exports = { buildExportArgs, canvasSize, ASPECTS };
+module.exports = { buildExportArgs, buildGraph, frameTimes, textsAt, canvasSize, ASPECTS, FORMATS };

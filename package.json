@@ -2,7 +2,7 @@
   "name": "kadr-studio",
   "productName": "Kadr Studio",
   "version": "0.1.0",
-  "description": "Prosty edytor wideo: timeline, tekst, filtry, eksport MP4 (Electron + FFmpeg)",
+  "description": "Prosty edytor wideo: timeline, tekst, filtry, eksport do wideo, audio, grafiki i prezentacji (Electron + FFmpeg)",
   "homepage": "https://github.com/OWNER/kadr-studio",
   "main": "src/main/main.js",
   "author": {
@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0"
+    "ffprobe-static": "^3.1.0",
+    "pptxgenjs": "^3.12.0"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -100,7 +101,7 @@
           ]
         }
       ],
-      "description": "Prosty edytor wideo z osią czasu, napisami, filtrami i eksportem do MP4 (FFmpeg w zestawie)."
+      "description": "Prosty edytor wideo z osią czasu, napisami, filtrami i eksportem do wideo, audio, grafiki i prezentacji (FFmpeg w zestawie)."
     },
     "appImage": {
       "artifactName": "Kadr-Studio-${version}-x86_64.${ext}"
